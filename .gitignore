@@ -1,0 +1,17 @@
+# The repo index key. NEVER commit this — see README.md on custody.
+*.p12
+*.jks
+*.keystore
+
+# Build output. Everything here is derived from GitHub Releases on every run;
+# committing APKs is what killed xarantolus/fdroid.
+repo/
+archive/
+staging/
+www/
+_site/
+tmp/
+
+# fdroidserver scratch
+.fdroid-*
+config.py

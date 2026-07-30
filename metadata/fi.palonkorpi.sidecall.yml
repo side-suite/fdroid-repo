@@ -1,0 +1,23 @@
+Categories:
+  - "Phone & SMS"
+License: GPL-3.0-only
+AuthorName: Oliver Palonkorpi
+WebSite: https://sidesuite.app/sidecall
+SourceCode: https://github.com/side-suite/SideCall
+IssueTracker: https://github.com/side-suite/SideCall/issues
+Donate: https://github.com/sponsors/oliverpalonkorp
+
+Summary: Keeps your ear off the buttons during calls
+
+Description: |-
+  A call-guard for the Sidephone SP-01. It keeps your ear off the buttons, and
+  keeps your microphone alive.
+
+  On a phone with real keys and no proximity-driven screen lock, holding a call
+  to your ear presses things you did not mean to press, and the screen going to
+  sleep can take the microphone with it. SideCall sits over the stock dialer and
+  fixes both: an ear guard blocks stray presses on the earpiece, and an
+  invisible wake-hold keeps the call alive on every route — earpiece, speaker or
+  headset.
+
+  No dialer replacement, no account, no network access.

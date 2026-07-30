@@ -1,0 +1,22 @@
+Categories:
+  - "Keyboards & Input"
+License: Apache-2.0
+AuthorName: Oliver Palonkorpi
+WebSite: https://sidesuite.app/sidetype
+SourceCode: https://github.com/side-suite/SideType
+IssueTracker: https://github.com/side-suite/SideType/issues
+Donate: https://github.com/sponsors/oliverpalonkorp
+
+Summary: Predictive keyboard for the Compact QWERTY tile
+
+Description: |-
+  A predictive keyboard built for the Sidephone SP-01's Compact QWERTY tile,
+  forked from Traditional T9.
+
+  Type whole words on a keypad where each key carries several letters, and
+  SideType works out what you meant. Over 30 Latin-script languages are
+  supported, with ride-along accents so you get ä, é and ñ without hunting
+  through a symbol menu.
+
+  Also included: offline voice input, an emoji picker, and dictionaries that
+  download on demand so the app itself stays small.

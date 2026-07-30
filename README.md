@@ -1,0 +1,188 @@
+# SideSuite App Pack
+
+An **F-Droid repository** carrying [SideType](https://github.com/side-suite/SideType),
+[SideCall](https://github.com/side-suite/SideCall) and SideHome for the
+[Sidephone SP-01](https://sidephone.com).
+
+The SP-01's stock **Library** app is upstream F-Droid Basic (`org.fdroid.basic`)
+with "repository" renamed to "app pack". So an App Pack *is* an F-Droid repo, and
+one QR code installs the whole suite — with **no unknown-sources prompt and
+automatic updates**, because the Library is a privileged system installer.
+
+> Not affiliated with Sidephone. Every app is also published as a signed APK on
+> GitHub Releases for Obtainium or manual install; that path is supported
+> permanently and is not a fallback.
+
+**Address:** `https://fdroid.sidesuite.app/fdroid/repo`
+**Fingerprint:** _(fill in from the real key — see “The key” below)_
+
+---
+
+## How it works
+
+Three layers, deliberately separate:
+
+| Layer | What | Where |
+|---|---|---|
+| **Source of truth** | Signed release APKs | GitHub Releases, in each app's own repo |
+| **Derivation** | `fdroid update` over the fetched APKs | this repo's CI |
+| **Serving** | Static files | GitHub Pages, behind a custom domain |
+
+The build is **stateless**. `repo/` is rebuilt from GitHub Releases on every run
+and is `.gitignore`d — no APKs ever enter git history. The pack must always be
+reconstructible from scratch by re-running the workflow. This is the discipline
+that stopped `xarantolus/fdroid`, which committed APKs and grew unboundedly
+before dying in 2022.
+
+Adding an app is one entry in [`apps.json`](apps.json) plus a
+`metadata/<package>.yml`. Apps with no release yet are skipped with a notice, so
+SideHome joins automatically the day it ships.
+
+### Why this address, on this host
+
+`repo_url` is baked into the signed index, stored by every client that adds the
+pack, and printed into **every QR code ever published**. Changing the *host*
+later is free. Changing the *address* strands every printed QR and every
+installed client.
+
+So the address is a custom domain from day one, and the host is whatever is
+cheapest behind it:
+
+- **GitHub Pages** — no per-file size cap, zero infrastructure, no egress bill.
+  (Cloudflare Pages is ruled out: its 25 MiB per-asset limit is smaller than
+  SideType's 41 MiB APK.)
+- **Cloudflare R2 is the escape hatch**, not a day-one decision. If bandwidth
+  ever becomes a real problem, swap DNS and mirror the bytes — clients and
+  printed QRs never notice. Worth knowing that GitHub's fair-use terms discourage
+  Pages as a file-hosting service; the portable address means being flagged costs
+  a DNS record, not a re-scan.
+
+A repo **cannot** delegate APK hosting to GitHub Releases.
+`PackageVersionV2.file` has no absolute-URL field, the client concatenates
+repo-relative paths, and it does not follow redirects. The repo must serve the
+bytes itself.
+
+---
+
+## The key
+
+Two different keys, and conflating them is the one unrecoverable mistake here.
+
+- **APK signing keys** stay exactly where they are, in each app repo. Android
+  requires the same key to update an installed app, so they must never enter CI.
+- **The repo index key** is separate, generated once, and lives in CI.
+
+The index key's SHA-256 fingerprint is pinned into every QR code you publish.
+**Lose it and the pack is dead** — clients reject a differently-signed index and
+every user must delete and re-add the pack. Back it up offline *and* in a
+password manager before the first publish.
+
+```sh
+keytool -genkeypair -keystore sidesuite-repo.p12 -storetype PKCS12 \
+  -alias sidesuite -keyalg RSA -keysize 4096 -validity 10000 \
+  -dname "CN=SideSuite, O=SideSuite, C=FI"
+```
+
+Never use `fdroid update --create-key` in CI — it generates a random password
+and writes it back into `config.yml`.
+
+Publish the fingerprint in the QR and as text on the site. Sidephone's own eight
+packs ship unpinned (trust-on-first-use); pinning costs nothing and is the
+difference between a user trusting DNS and a user trusting your key.
+
+---
+
+## Required secrets
+
+| Secret | What |
+|---|---|
+| `SIDESUITE_REPO_KEYSTORE_B64` | `base64 -w0 sidesuite-repo.p12` |
+| `KEYSTOREPASS` | keystore password |
+| `KEYPASS` | key password |
+| `APPS_READ_TOKEN` | *optional* — only if an app repo goes private |
+
+GitHub Pages must be enabled with **source: GitHub Actions**, and
+`fdroid.sidesuite.app` set as the custom domain.
+
+---
+
+## Building locally
+
+Requires `fdroidserver`, a JDK, `apksigner` via `ANDROID_HOME`, plus
+authenticated `gh` and `jq`. On macOS: `brew install fdroidserver`.
+
+```sh
+export KEYSTOREPASS=... KEYPASS=...
+./scripts/build.sh
+```
+
+## Testing on a real SP-01 — no publishing needed
+
+You do **not** need a public host to test a pack. The Library's
+`networkSecurityConfig` sets `base-config cleartextTrafficPermitted="true"`, so
+the phone can fetch over plain HTTP from your machine through the USB cable:
+
+```sh
+./scripts/test-on-device.sh
+```
+
+This does `adb reverse tcp:8777`, serves `repo/` locally, and opens the
+Library's "Add app pack" screen pointed at it. Verified working end-to-end on
+`SP01GE260600728`, 2026-07-30.
+
+Two things that will confuse you:
+
+- After tapping **Add app pack**, the client opens the app list with the repo
+  name pre-filled in the **search field**, showing *"No matching applications
+  available."* This is not a failure. Clear the field, or open an app directly
+  with `am start ... AppDetailsActivity -e appid <package>`.
+- **Every** app renders a placeholder icon in the Library, including Sidephone's
+  own packs. Device-wide behaviour — don't go hunting for a bug in the index.
+
+To prove silent install, uninstall a **low-stakes** app first and reinstall from
+the pack — never the active IME. Success is
+`installerPackageName=org.fdroid.basic` with no unknown-sources prompt.
+Uninstalling resets runtime permissions and wipes app data.
+
+Remove the test pack afterwards via **Library → Settings → App Packs**;
+`ManageReposActivity` is not externally launchable, so this is a manual step.
+
+---
+
+## Triggering a rebuild from an app release
+
+Add this to each app repo's release workflow so the pack refreshes itself:
+
+```yaml
+- name: Refresh the SideSuite App Pack
+  run: |
+    curl -sf -X POST \
+      -H "Authorization: Bearer ${{ secrets.PACK_DISPATCH_TOKEN }}" \
+      -H "Accept: application/vnd.github+json" \
+      https://api.github.com/repos/side-suite/fdroid-repo/dispatches \
+      -d '{"event_type":"app-released"}'
+```
+
+`PACK_DISPATCH_TOKEN` needs `contents: write` on **this** repo only. A weekly
+cron in the workflow is the safety net if a dispatch is ever missed.
+
+---
+
+## Gotchas, all confirmed
+
+- An APK with **no `metadata/<pkg>.yml` is silently excluded** from the index —
+  warning only. The workflow fails on an empty index to catch this.
+- Secrets syntax is `{env: VAR}`, not `${VAR}`. But `keystore: {env: ...}` is
+  **broken** ([fdroidserver#870](https://gitlab.com/fdroid/fdroidserver/-/issues/870)) —
+  it stays a literal path, written from the base64 secret at runtime.
+- `FDROID_KEY_STORE_PASS` / `FDROID_KEY_PASS` are internal to fdroidserver and
+  are **not** read from your environment.
+- `repo_icon` resolves relative to `repo/icons/`, so `icon.png` is copied there
+  before `fdroid update` runs.
+- fastlane metadata uses **`summary.txt`** and **`description.txt`** here, not
+  upstream fastlane's `short_description.txt` / `full_description.txt`.
+- The old F-Droid docs page still shows Python-style `repo_url = "..."`;
+  `config.py` was removed in 2.4.0. Use YAML.
+
+Full research and on-device evidence:
+`SideSuite/research/app-library-qr.md` (§9 is the verification run).

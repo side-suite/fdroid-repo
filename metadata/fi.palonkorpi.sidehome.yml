@@ -1,0 +1,25 @@
+# SideHome has no public release yet. This file is here so that the moment a
+# release lands, scripts/fetch-apks.sh picks it up and it appears in the pack
+# with real metadata — an APK with no metadata/<pkg>.yml is silently dropped
+# from the index with only a warning.
+Categories:
+  - Theming
+License: GPL-3.0-only
+AuthorName: Oliver Palonkorpi
+WebSite: https://sidesuite.app/sidehome
+SourceCode: https://github.com/side-suite/SideHome
+IssueTracker: https://github.com/side-suite/SideHome/issues
+Donate: https://github.com/sponsors/oliverpalonkorp
+
+Summary: A calm, ambient launcher for the SP-01
+
+Description: |-
+  A calm, ambient home-screen launcher for the Sidephone SP-01 — a window onto
+  your day, not a wall of apps.
+
+  The home screen shows what matters now: the time, the weather, and the few
+  apps you actually reach for. Everything else lives in a library one swipe
+  away, searchable with the keypad and browsable by category.
+
+  Built natively in Jetpack Compose for a 2.8-inch screen and hardware keys, so
+  it is fully drivable without touching the display.

@@ -1,0 +1,106 @@
+name: Publish App Pack
+
+on:
+  workflow_dispatch:
+  # Fired by each app repo's release workflow — see README.md.
+  repository_dispatch:
+    types: [app-released]
+  # Safety net: if a dispatch is ever missed, the pack self-heals within a week.
+  schedule:
+    - cron: '17 4 * * 1'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two publishes race on the Pages deployment.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install fdroidserver
+        run: pip install "fdroidserver==2.4.5"
+
+      # fdroidserver signs entry.jar with apksigner from Android build-tools.
+      # ubuntu-latest ships the SDK; fail loudly here rather than with a
+      # confusing error deep inside `fdroid update`.
+      - name: Locate apksigner
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort | tail -1)
+          if [ -z "$apksigner" ]; then
+            echo "::error::No apksigner found under $ANDROID_HOME/build-tools." \
+                 "fdroidserver cannot sign entry.jar without it."
+            exit 1
+          fi
+          echo "found: $apksigner"
+
+      - name: Restore repo index keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.SIDESUITE_REPO_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::Secret SIDESUITE_REPO_KEYSTORE_B64 is not set. See README.md."
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_B64" | base64 -d > sidesuite-repo.p12
+          chmod 0600 sidesuite-repo.p12
+          # config.yml references this as a literal path, because
+          # `keystore: {env: ...}` is broken upstream (fdroidserver#870).
+
+      - name: Fetch release APKs
+        env:
+          # The default token can read releases from public repos in the org.
+          # If an app repo ever goes private, set APPS_READ_TOKEN to a PAT.
+          GH_TOKEN: ${{ secrets.APPS_READ_TOKEN != '' && secrets.APPS_READ_TOKEN || secrets.GITHUB_TOKEN }}
+        run: ./scripts/fetch-apks.sh
+
+      - name: Build signed index
+        env:
+          KEYSTOREPASS: ${{ secrets.KEYSTOREPASS }}
+          KEYPASS: ${{ secrets.KEYPASS }}
+        run: |
+          mkdir -p repo/icons
+          cp icon.png repo/icons/icon.png
+          fdroid update -c --pretty --use-date-from-apk
+
+      # An APK with no metadata/<pkg>.yml is silently dropped from the index with
+      # only a warning, so never let an empty or short pack publish quietly.
+      - name: Verify the index actually contains apps
+        run: python3 scripts/verify-index.py
+
+      - name: Stage Pages artifact
+        run: |
+          mkdir -p _site/fdroid
+          cp -r repo _site/fdroid/repo
+          # Custom domain. The address in the signed index must match this, or
+          # clients fetch from a host that serves a different repo.
+          echo 'fdroid.sidesuite.app' > _site/CNAME
+          cp web/index.html _site/index.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

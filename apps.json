@@ -1,0 +1,17 @@
+[
+  {
+    "name": "SideType",
+    "package": "fi.palonkorpi.sidetype",
+    "repo": "side-suite/SideType"
+  },
+  {
+    "name": "SideCall",
+    "package": "fi.palonkorpi.sidecall",
+    "repo": "side-suite/SideCall"
+  },
+  {
+    "name": "SideHome",
+    "package": "fi.palonkorpi.sidehome",
+    "repo": "side-suite/SideHome"
+  }
+]
