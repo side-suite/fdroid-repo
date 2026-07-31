@@ -77,11 +77,16 @@ The index key's SHA-256 fingerprint is pinned into every QR code you publish.
 every user must delete and re-add the pack. Back it up offline *and* in a
 password manager before the first publish.
 
+Generate it once, with:
+
 ```sh
-keytool -genkeypair -keystore sidesuite-repo.p12 -storetype PKCS12 \
-  -alias sidesuite -keyalg RSA -keysize 4096 -validity 10000 \
-  -dname "CN=SideSuite, O=SideSuite, C=FI"
+./scripts/make-index-key.sh
 ```
+
+That writes the keystore here (gitignored) and the password to a file *outside*
+the repo, rather than echoing it into a terminal scrollback. It refuses to run
+if a keystore already exists. Follow the three steps it prints before publishing
+anything.
 
 Never use `fdroid update --create-key` in CI — it generates a random password
 and writes it back into `config.yml`.
@@ -103,6 +108,28 @@ difference between a user trusting DNS and a user trusting your key.
 
 GitHub Pages must be enabled with **source: GitHub Actions**, and
 `fdroid.sidesuite.app` set as the custom domain.
+
+### Switching to Cloudflare R2
+
+The R2 variant is written and waiting in `.github/workflows-variants/publish-r2.yml`.
+GitHub only reads `.github/workflows/` and does not recurse, so it is inert
+where it sits and cannot double-publish. To switch:
+
+```sh
+git mv .github/workflows/publish.yml             .github/workflows-variants/publish-pages.yml
+git mv .github/workflows-variants/publish-r2.yml .github/workflows/publish.yml
+```
+
+…then point `fdroid.sidesuite.app` at the bucket and add `R2_ACCOUNT_ID`,
+`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `CF_ZONE_ID`, `CF_CACHE_PURGE_TOKEN`.
+`config.yml` does not change — that is the point of owning the address.
+
+The R2 tail is not a straight port; three failure modes are specific to it and
+are handled explicitly in that file: Cloudflare caches 404s (so APKs upload
+before the index), `aws s3 sync --delete` treats `--exclude`d files as deleted
+(so pruning happens in a separate, exclude-free pass *after* the index is live),
+and the index filenames are stable across versions (so they get `no-cache` plus
+an edge purge).
 
 ---
 
@@ -151,20 +178,36 @@ Remove the test pack afterwards via **Library → Settings → App Packs**;
 
 ## Triggering a rebuild from an app release
 
-Add this to each app repo's release workflow so the pack refreshes itself:
+**None of the three app repos has any CI.** Releases are cut by hand, so there
+is no existing release workflow to hook into — each repo gets a small standalone
+workflow of its own instead:
+
+    .github/workflows/notify-app-pack.yml
+
+It triggers on `release: [published]`, so it fires however the release was made
+(web UI, `gh release create`, API), and `POST`s `{"event_type":"app-released"}`
+to this repo's `dispatches` endpoint. See that file in any of the app repos for
+the full version; the shape is:
 
 ```yaml
-- name: Refresh the SideSuite App Pack
-  run: |
-    curl -sf -X POST \
-      -H "Authorization: Bearer ${{ secrets.PACK_DISPATCH_TOKEN }}" \
-      -H "Accept: application/vnd.github+json" \
-      https://api.github.com/repos/side-suite/fdroid-repo/dispatches \
-      -d '{"event_type":"app-released"}'
+on:
+  release:
+    types: [published]
 ```
 
-`PACK_DISPATCH_TOKEN` needs `contents: write` on **this** repo only. A weekly
-cron in the workflow is the safety net if a dispatch is ever missed.
+To fire, the workflow must live on the app repo's **default branch** —
+`master` for SideType, `main` for SideCall.
+
+### The token
+
+`GITHUB_TOKEN` **cannot dispatch across repositories.** It needs a fine-grained
+PAT with `contents: write` on `side-suite/fdroid-repo` and nothing else, stored
+as an **organisation secret** named `FDROID_DISPATCH_TOKEN` on `side-suite`, so
+one copy serves all three repos.
+
+If it is missing the notify job fails loudly — a red X on the app repo — but the
+release itself is unaffected. `workflow_dispatch` here, or the weekly cron, will
+pick the release up regardless. The dispatch only buys immediacy.
 
 ---
 

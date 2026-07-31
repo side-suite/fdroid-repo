@@ -1,0 +1,208 @@
+name: Publish App Pack
+
+# ---------------------------------------------------------------------------
+# INERT. This file is the Cloudflare R2 variant of ../workflows/publish.yml.
+#
+# GitHub only reads `.github/workflows/`, non-recursively, so nothing here runs
+# until it is moved. Switching hosts is:
+#
+#   git mv .github/workflows/publish.yml         .github/workflows-variants/publish-pages.yml
+#   git mv .github/workflows-variants/publish-r2.yml .github/workflows/publish.yml
+#
+# ...plus pointing fdroid.sidesuite.app at the bucket instead of Pages. The
+# repo_url in config.yml does NOT change — that is the whole point of owning
+# the address. No published QR is ever affected.
+#
+# Everything up to "Verify the index" is identical to the Pages variant; only
+# the deploy tail differs. Keep the two in step when editing.
+# ---------------------------------------------------------------------------
+
+on:
+  workflow_dispatch:
+  # Fired by each app repo's notify-app-pack.yml — see README.md.
+  repository_dispatch:
+    types: [app-released]
+  # Safety net: if a dispatch is ever missed, the pack self-heals within a week.
+  schedule:
+    - cron: '17 4 * * 1'
+
+permissions:
+  contents: read
+
+# Never let two publishes race on the bucket.
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+env:
+  R2_BUCKET: sidesuite-fdroid
+  # Index files keep their names across versions, so they are the only objects
+  # that must never be served stale. Listed once, used by three steps.
+  INDEX_FILES: entry.jar entry.json index-v1.jar index-v1.json index-v2.json index.jar index.xml
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install fdroidserver
+        run: pip install "fdroidserver==2.4.5"
+
+      # fdroidserver signs entry.jar with apksigner from Android build-tools.
+      # ubuntu-latest ships the SDK; fail loudly here rather than with a
+      # confusing error deep inside `fdroid update`.
+      - name: Locate apksigner
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort | tail -1)
+          if [ -z "$apksigner" ]; then
+            echo "::error::No apksigner found under $ANDROID_HOME/build-tools." \
+                 "fdroidserver cannot sign entry.jar without it."
+            exit 1
+          fi
+          echo "found: $apksigner"
+
+      - name: Restore repo index keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.SIDESUITE_REPO_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::Secret SIDESUITE_REPO_KEYSTORE_B64 is not set. See README.md."
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_B64" | base64 -d > sidesuite-repo.p12
+          chmod 0600 sidesuite-repo.p12
+          # config.yml references this as a literal path, because
+          # `keystore: {env: ...}` is broken upstream (fdroidserver#870).
+
+      - name: Fetch release APKs
+        env:
+          # The default token can read releases from public repos in the org.
+          # If an app repo ever goes private, set APPS_READ_TOKEN to a PAT.
+          GH_TOKEN: ${{ secrets.APPS_READ_TOKEN != '' && secrets.APPS_READ_TOKEN || secrets.GITHUB_TOKEN }}
+        run: ./scripts/fetch-apks.sh
+
+      - name: Build signed index
+        env:
+          KEYSTOREPASS: ${{ secrets.KEYSTOREPASS }}
+          KEYPASS: ${{ secrets.KEYPASS }}
+        run: |
+          mkdir -p repo/icons
+          cp icon.png repo/icons/icon.png
+          fdroid update -c --pretty --use-date-from-apk
+
+      # An APK with no metadata/<pkg>.yml is silently dropped from the index with
+      # only a warning, so never let an empty or short pack publish quietly.
+      - name: Verify the index actually contains apps
+        run: python3 scripts/verify-index.py
+
+      # --- deploy tail: R2 instead of Pages -----------------------------------
+
+      - name: Stage the tree that mirrors the bucket
+        run: |
+          mkdir -p _site/fdroid
+          cp -r repo _site/fdroid/repo
+          cp web/index.html _site/index.html
+          # Object keys carry the path, so _site/fdroid/repo/entry.jar becomes
+          # https://fdroid.sidesuite.app/fdroid/repo/entry.jar. Keep /fdroid/repo:
+          # it is what the bare-https intent filter matches, and fdroidserver
+          # hard-fails on mirror paths not ending in `fdroid`.
+
+      # ORDER IS LOAD-BEARING. Cloudflare caches 404s, and a cached 404 outlives
+      # the fix. If the index went up first, a client could ask for an APK that
+      # is not there yet, cache the miss, and fail to install even after it lands.
+      # So: payload first, index last.
+      #
+      # Note there is NO --delete here. `aws s3 sync --delete` treats excluded
+      # files as absent from the source, so a pass that excludes the index files
+      # would DELETE THE LIVE INDEX and then re-upload it — opening exactly the
+      # 404 window this ordering exists to avoid. Pruning happens at the end.
+      - name: Upload APKs and icons (never the index)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        run: |
+          excludes=""
+          for f in $INDEX_FILES; do excludes="$excludes --exclude fdroid/repo/$f"; done
+          # APK filenames carry their version, so they are immutable and safe to
+          # cache indefinitely.
+          aws s3 sync _site/ "s3://$R2_BUCKET/" \
+            --endpoint-url "https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com" \
+            --size-only --no-progress \
+            --cache-control "public, max-age=31536000, immutable" \
+            $excludes
+
+      - name: Upload the index last
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        run: |
+          for f in $INDEX_FILES; do
+            [ -f "_site/fdroid/repo/$f" ] || continue
+            # These keep their names across versions, so they are the one thing
+            # that must never be served stale. no-cache on the object as well as
+            # the purge below — belt and braces, since the purge can fail.
+            aws s3 cp "_site/fdroid/repo/$f" "s3://$R2_BUCKET/fdroid/repo/$f" \
+              --endpoint-url "https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com" \
+              --no-progress \
+              --cache-control "no-cache, must-revalidate"
+          done
+
+      - name: Purge the index from Cloudflare's edge cache
+        env:
+          CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
+          CF_CACHE_PURGE_TOKEN: ${{ secrets.CF_CACHE_PURGE_TOKEN }}
+        run: |
+          urls=$(for f in $INDEX_FILES; do
+            echo "https://fdroid.sidesuite.app/fdroid/repo/$f"
+          done | jq -R . | jq -s '{files: .}')
+          curl --fail-with-body -sS -X POST \
+            "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/purge_cache" \
+            -H "Authorization: Bearer $CF_CACHE_PURGE_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$urls"
+          echo
+
+      # Only now, with the new index live, is it safe to remove objects it no
+      # longer references — a full sync with no --exclude, so --delete cannot
+      # misfire on the index. Old APK versions from previous runs go here.
+      - name: Prune objects the new index no longer references
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+        run: |
+          aws s3 sync _site/ "s3://$R2_BUCKET/" \
+            --endpoint-url "https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com" \
+            --size-only --no-progress --delete
+
+      - name: Smoke-test the published pack
+        run: |
+          base=https://fdroid.sidesuite.app/fdroid/repo
+          for f in entry.jar index-v2.json; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' "$base/$f")
+            echo "$f -> $code"
+            [ "$code" = 200 ] || { echo "::error::$base/$f returned $code"; exit 1; }
+          done
+          # Prove the APK the index points at is actually reachable, since a
+          # missing APK is the failure mode users would hit, not a broken index.
+          apk=$(python3 -c "import json;d=json.load(open('repo/index-v2.json'));p=sorted(d['packages'])[0];print(next(iter(d['packages'][p]['versions'].values()))['file']['name'])")
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -r 0-1023 "$base$apk")
+          echo "$apk -> $code"
+          [ "$code" = 200 ] || [ "$code" = 206 ] || { echo "::error::$base$apk returned $code"; exit 1; }

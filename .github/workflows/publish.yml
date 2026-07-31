@@ -104,3 +104,20 @@ jobs:
 
       - id: deploy
         uses: actions/deploy-pages@v4
+
+      # A green deploy does not prove the pack is usable. Check the two things a
+      # client actually fetches: the signed index, and the APK it points at.
+      # On the very first publish this can fail while DNS/TLS for the custom
+      # domain settles — that is worth seeing, not worth hiding.
+      - name: Smoke-test the published pack
+        run: |
+          base=https://fdroid.sidesuite.app/fdroid/repo
+          for f in entry.jar index-v2.json; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' "$base/$f")
+            echo "$f -> $code"
+            [ "$code" = 200 ] || { echo "::error::$base/$f returned $code"; exit 1; }
+          done
+          apk=$(python3 -c "import json;d=json.load(open('repo/index-v2.json'));p=sorted(d['packages'])[0];print(next(iter(d['packages'][p]['versions'].values()))['file']['name'])")
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -r 0-1023 "$base$apk")
+          echo "$apk -> $code"
+          [ "$code" = 200 ] || [ "$code" = 206 ] || { echo "::error::$base$apk returned $code"; exit 1; }
