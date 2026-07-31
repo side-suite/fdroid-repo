@@ -64,6 +64,15 @@ bytes itself.
 
 ---
 
+---
+
+# Maintaining the pack
+
+Everything below is for whoever runs this repo. If you came here to install the
+apps, you already have what you need above.
+
+---
+
 ## The key
 
 Two different keys, and conflating them is the one unrecoverable mistake here.
