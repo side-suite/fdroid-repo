@@ -99,12 +99,39 @@ difference between a user trusting DNS and a user trusting your key.
 
 ## Required secrets
 
+GitHub Actions secrets live at one of several **scopes**. Nothing here is
+account-wide. Two scopes are in play across SideSuite, and mixing them up is the
+usual source of "why can't the workflow see it":
+
+| Scope | Set with | Used for |
+|---|---|---|
+| **Repository** | `gh secret set NAME -R side-suite/fdroid-repo` | everything in the table below |
+| **Organisation** | `gh secret set NAME --org side-suite --visibility all` | only `FDROID_DISPATCH_TOKEN`, so all three app repos share one copy |
+
+`gh secret set` defaults to the repository inferred from the current directory's
+git remote. **This repo has no remote**, so `-R` is not optional here — without
+it the command has nothing to infer from.
+
+These four are repository secrets on `side-suite/fdroid-repo`:
+
 | Secret | What |
 |---|---|
-| `SIDESUITE_REPO_KEYSTORE_B64` | `base64 -w0 sidesuite-repo.p12` |
+| `SIDESUITE_REPO_KEYSTORE_B64` | `base64 -i sidesuite-repo.p12 \| tr -d '\n'` |
 | `KEYSTOREPASS` | keystore password |
-| `KEYPASS` | key password |
-| `APPS_READ_TOKEN` | *optional* — only if an app repo goes private |
+| `KEYPASS` | key password (identical — PKCS12 requires it) |
+| `APPS_READ_TOKEN` | *optional*, only if an app repo goes private |
+
+Pipe values in rather than pasting; secrets are write-only once set, so a typo
+is invisible until a run fails:
+
+```sh
+base64 -i sidesuite-repo.p12 | tr -d '\n' \
+  | gh secret set SIDESUITE_REPO_KEYSTORE_B64 -R side-suite/fdroid-repo
+gh secret set KEYSTOREPASS -R side-suite/fdroid-repo < ../sidesuite-secrets/repo-index-key-password.txt
+gh secret set KEYPASS      -R side-suite/fdroid-repo < ../sidesuite-secrets/repo-index-key-password.txt
+
+gh secret list -R side-suite/fdroid-repo
+```
 
 GitHub Pages must be enabled with **source: GitHub Actions**, and
 `fdroid.sidesuite.app` set as the custom domain.

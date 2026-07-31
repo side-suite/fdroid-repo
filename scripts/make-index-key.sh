@@ -63,17 +63,33 @@ cat <<EOF
 
     $FINGERPRINT
 
-Do these three things now, before publishing anything:
+Do these in order, before publishing anything. KEEP THE PASSWORD FILE UNTIL
+STEP 3 IS DONE — the secret-setting commands read from it.
 
-  1. Put the password in your password manager, then delete the file above.
+  1. Copy the password into your password manager now. Do not delete the file
+     yet; deleting it before step 3 leaves you retyping a 44-character random
+     string, and a keystore whose password is lost is a keystore you must
+     regenerate.
   2. Back up $KEYSTORE somewhere offline. Not only on this Mac.
-  3. Set the GitHub Actions secrets on the pack repo:
+  3. Once side-suite/fdroid-repo exists on GitHub, set its three Actions
+     secrets. These are REPOSITORY secrets, not account-wide ones. The -R flag
+     is required here because this repo has no git remote for gh to infer from,
+     and the values are piped in so they never touch the clipboard:
 
-       base64 -i $KEYSTORE | pbcopy
-       gh secret set SIDESUITE_REPO_KEYSTORE_B64   # paste
-       gh secret set KEYSTOREPASS                  # paste the password
-       gh secret set KEYPASS                       # the same password
+       base64 -i $KEYSTORE | tr -d '\\n' \\
+         | gh secret set SIDESUITE_REPO_KEYSTORE_B64 -R side-suite/fdroid-repo
+       gh secret set KEYSTOREPASS -R side-suite/fdroid-repo < $PW_FILE
+       gh secret set KEYPASS      -R side-suite/fdroid-repo < $PW_FILE
+
+     Check them with:  gh secret list -R side-suite/fdroid-repo
+
+  4. Only now delete $PW_FILE, having confirmed the password manager entry
+     opens and the three secrets are listed.
 
 Then record the fingerprint in SID-166 so the QR and README work can reference
 one authoritative value.
+
+If the password is ever lost BEFORE the pack is published, the fix is free:
+delete $KEYSTORE and run this script again. After publishing it is not fixable
+at all, because the fingerprint is pinned in every client that added the pack.
 EOF
