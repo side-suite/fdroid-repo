@@ -24,56 +24,37 @@ if [ ! -f repo/index-v2.json ]; then
 fi
 
 # The fingerprint a client pins is the SHA-256 of the DER signing certificate,
-# uppercase hex. fdroidserver exposes that certificate in more than one place and
-# the exact field has moved between index versions, so try each known location
-# and fail loudly rather than emit a fingerprint that might be wrong.
-FINGERPRINT=$(python3 - <<'PY'
-import hashlib, json, sys, xml.etree.ElementTree as ET
-from pathlib import Path
+# uppercase hex.
+#
+# It is NOT in any of the index JSON files. Verified against the live pack on
+# 2026-07-31: index-v1.json's repo object holds only address/description/icon/
+# name/timestamp/version, and index-v2.json's only adds categories. The
+# certificate lives in the JAR signature block of entry.jar
+# (META-INF/<alias>.RSA), which is what the client actually verifies anyway.
+FINGERPRINT=$(keytool -printcert -jarfile repo/entry.jar 2>/dev/null \
+  | grep -i 'SHA256:' | head -1 | sed 's/.*SHA256: *//; s/://g' | tr -d '[:space:]' \
+  | tr '[:lower:]' '[:upper:]')
 
-def fp(cert_hex):
-    return hashlib.sha256(bytes.fromhex(cert_hex)).hexdigest().upper()
+if [ ${#FINGERPRINT} -ne 64 ]; then
+  echo "::error::Could not read a 64-char SHA-256 from repo/entry.jar (got '${FINGERPRINT}')." >&2
+  echo "         Do NOT paste a fingerprint from anywhere else — derive it from the" >&2
+  echo "         signed index, or the README will disagree with what clients see." >&2
+  exit 1
+fi
 
-candidates = []
+# Second, independent derivation. Agreement between two code paths is the whole
+# reason for publishing a fingerprint, so the generator should hold itself to it.
+VIA_OPENSSL=$(unzip -p repo/entry.jar 'META-INF/*.RSA' 2>/dev/null \
+  | openssl pkcs7 -inform DER -print_certs 2>/dev/null \
+  | openssl x509 -outform DER 2>/dev/null \
+  | shasum -a 256 | awk '{print toupper($1)}')
 
-# index-v1.json carries the DER cert as repo.pubkey.
-p = Path("repo/index-v1.json")
-if p.exists():
-    repo = json.loads(p.read_text()).get("repo", {})
-    if repo.get("pubkey"):
-        candidates.append(("index-v1.json", fp(repo["pubkey"])))
-
-# index.xml (v0) carries the same value as a <repo pubkey="..."> attribute.
-# Note <repo> is a CHILD of the <fdroid> root, not the root itself.
-p = Path("repo/index.xml")
-if p.exists():
-    node = ET.parse(p).getroot().find("repo")
-    pubkey = node.get("pubkey") if node is not None else None
-    if pubkey:
-        candidates.append(("index.xml", fp(pubkey)))
-
-# index-v2.json, in case a future fdroidserver puts it on the repo object.
-p = Path("repo/index-v2.json")
-if p.exists():
-    repo = json.loads(p.read_text()).get("repo", {})
-    cert = repo.get("signingCert") or repo.get("cert") or repo.get("pubkey")
-    if cert:
-        candidates.append(("index-v2.json", fp(cert)))
-
-if not candidates:
-    sys.exit("ERROR: could not find the signing certificate in any index file.\n"
-             "       Read repo/index-v1.json and look for the field holding the\n"
-             "       hex-encoded certificate, then teach this script about it.\n"
-             "       Do NOT paste a fingerprint from anywhere else.")
-
-values = {f for _, f in candidates}
-if len(values) > 1:
-    sys.exit("ERROR: index files disagree on the fingerprint:\n  "
-             + "\n  ".join(f"{src}: {f}" for src, f in candidates))
-
-print(candidates[0][1])
-PY
-)
+if [ -n "$VIA_OPENSSL" ] && [ "$VIA_OPENSSL" != "$FINGERPRINT" ]; then
+  echo "::error::keytool and openssl disagree on the fingerprint:" >&2
+  echo "  keytool: $FINGERPRINT" >&2
+  echo "  openssl: $VIA_OPENSSL" >&2
+  exit 1
+fi
 
 echo "fingerprint: $FINGERPRINT"
 

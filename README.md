@@ -14,7 +14,21 @@ automatic updates**, because the Library is a privileged system installer.
 > permanently and is not a fallback.
 
 **Address:** `https://fdroid.sidesuite.app/fdroid/repo`
-**Fingerprint:** _(fill in from the real key — see “The key” below)_
+
+**Fingerprint (SHA-256):**
+
+```
+61FD7A8F0D32925EE80C7F55A6690C2A02C2FC3CA9C678370BF623EAB29870A0
+```
+
+The Library shows this when you add the pack. If what it shows differs from the
+above, stop: you are being served someone else's repo. Verify it yourself against
+the live index at any time with:
+
+```sh
+curl -sO https://fdroid.sidesuite.app/fdroid/repo/entry.jar
+keytool -printcert -jarfile entry.jar | grep SHA256
+```
 
 ---
 
