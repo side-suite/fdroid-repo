@@ -21,9 +21,9 @@ automatic updates**, because the Library is a privileged system installer.
 61FD7A8F0D32925EE80C7F55A6690C2A02C2FC3CA9C678370BF623EAB29870A0
 ```
 
-The Library shows this when you add the pack. If what it shows differs from the
-above, stop: you are being served someone else's repo. Verify it yourself against
-the live index at any time with:
+The Library shows this as it adds the pack, and checks every update against it
+afterwards without asking. You can confirm it against the live index yourself at
+any time:
 
 ```sh
 curl -sO https://fdroid.sidesuite.app/fdroid/repo/entry.jar
