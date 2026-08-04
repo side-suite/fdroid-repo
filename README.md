@@ -48,6 +48,15 @@ reconstructible from scratch by re-running the workflow. This is the discipline
 that stopped `xarantolus/fdroid`, which committed APKs and grew unboundedly
 before dying in 2022.
 
+Each run fetches the **last three releases** per app, not just the newest, and
+`archive_older: 0` keeps all of them in the main index. This is not for history
+— it is what keeps stale clients working. An F-Droid client downloads an APK by
+the exact filename in the index it last synced, so a client that has not
+refreshed since the previous publish still asks for the old filename. When the
+pack held only the newest APK, that request 404'd and clients surfaced a bare
+`ClientRequestException`. SideHome users hit this on 2026-08-03, when v1.2
+replaced v1.1 the same day. Do not trim this back to one version per app.
+
 Adding an app is one entry in [`apps.json`](apps.json) plus a
 `metadata/<package>.yml`. Apps with no release yet are skipped with a notice, so
 SideHome joins automatically the day it ships.

@@ -23,7 +23,10 @@ repo_keyalias: sidesuite
 keystorepass: {env: KEYSTOREPASS}
 keypass: {env: KEYPASS}
 
-# Archiving disabled: every fetched version stays in the main index. The build
-# is stateless and only ever fetches the latest release per app, so this keeps
-# exactly one version per app.
+# Archiving disabled: every fetched version stays in the MAIN index. This is
+# load-bearing, not tidiness. scripts/fetch-apks.sh deliberately fetches the
+# last few releases per app so that clients holding a stale index can still
+# download the filename they know about (see the comment at the top of that
+# script). Archiving would move exactly those older APKs into an archive repo
+# that no client is subscribed to, which reintroduces the 404 this prevents.
 archive_older: 0
